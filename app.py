@@ -26,6 +26,7 @@ DATA_FILE = 'bot_data.json'
 ADMIN_USER_IDS = [
     # 範例：123456789012345678,
     775343433278816268,
+    970350993042714655,
 ]
 
 def load_data():
