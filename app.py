@@ -25,8 +25,7 @@ DATA_FILE = 'bot_data.json'
 # 如何獲取你的 Discord ID：開啟開發者模式 → 右鍵點擊你的名字 → 複製 ID
 ADMIN_USER_IDS = [
     # 範例：123456789012345678,
-    775343433278816268,
-    970350993042714655,
+    # 在這裡填入你的用戶 ID
 ]
 
 def load_data():
@@ -98,8 +97,12 @@ def is_admin(interaction: discord.Interaction) -> bool:
     return False
 
 def require_verified():
-    """要求用戶已通過驗證"""
+    """要求用戶已通過驗證（管理員自動通過）"""
     async def predicate(interaction: discord.Interaction) -> bool:
+        # 管理員自動通過驗證檢查
+        if is_admin(interaction):
+            return True
+        
         if not data.get('verified_role'):
             await interaction.response.send_message("❌ 尚未設置驗證身分組！", ephemeral=True)
             return False
