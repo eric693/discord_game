@@ -1,0 +1,36 @@
+{
+  "users": {
+    "970350993042714655": {
+      "game_points": 0,
+      "activity_points": 0,
+      "invite_code": "J8VFAEX4",
+      "invited_by": null,
+      "invited_users": [],
+      "last_checkin": null,
+      "checkin_streak": 0,
+      "weekly_checkin": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ],
+      "gear": {
+        "attack": 0,
+        "defense": 0,
+        "hp": 100
+      },
+      "mineral_level": 0,
+      "mineral_last_claim": null,
+      "lottery_tickets": [],
+      "redemption_history": {},
+      "my_serials": []
+    }
+  },
+  "invite_codes": {},
+  "redemption_codes": {},
+  "verification_channel": null,
+  "verified_role": null
+}
