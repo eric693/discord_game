@@ -59,7 +59,8 @@ def init_user(user_id: int):
             'mineral_level': 0,
             'mineral_last_claim': None,
             'lottery_tickets': [],
-            'redemption_history': {}
+            'redemption_history': {},
+            'my_serials': []  # 新增：儲存用戶獲得的所有序號
         }
         save_data()
 
@@ -69,6 +70,14 @@ def generate_invite_code():
         code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         if code not in data['invite_codes']:
             return code
+
+def generate_game_serial():
+    """生成20碼遊戲序號（格式：XXXX-XXXX-XXXX-XXXX-XXXX）"""
+    segments = []
+    for _ in range(5):
+        segment = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+        segments.append(segment)
+    return '-'.join(segments)
 
 # ==================== 權限檢查裝飾器 ====================
 def require_verified():
@@ -593,11 +602,11 @@ async def add_redeem_code(
         f"有效期：{duration.name}"
     )
 
-@bot.tree.command(name="add_serial_code", description="[管理員] 新增序號池兌換碼（派發序號）")
+@bot.tree.command(name="add_serial_code", description="[管理員] 新增序號池兌換碼")
 @app_commands.describe(
-    code="兌換碼",
-    serials="序號列表（用逗號分隔，例如：KEY1,KEY2,KEY3）",
-    description="序號描述（例如：Steam激活碼）",
+    code="兌換碼名稱",
+    item_name="道具名稱（例如：遊戲激活碼、月卡序號）",
+    quantity="序號數量（自動生成20碼序號）",
     duration="有效期限"
 )
 @app_commands.choices(
@@ -611,8 +620,8 @@ async def add_redeem_code(
 async def add_serial_code(
     interaction: discord.Interaction,
     code: str,
-    serials: str,
-    description: str,
+    item_name: str,
+    quantity: int,
     duration: app_commands.Choice[str]
 ):
     if not interaction.user.guild_permissions.administrator:
@@ -623,6 +632,74 @@ async def add_serial_code(
         await interaction.response.send_message("❌ 此兌換碼已存在！", ephemeral=True)
         return
     
+    if quantity <= 0 or quantity > 1000:
+        await interaction.response.send_message("❌ 序號數量必須在 1-1000 之間！", ephemeral=True)
+        return
+    
+    # 自動生成指定數量的20碼序號
+    serial_pool = []
+    for _ in range(quantity):
+        serial_pool.append(generate_game_serial())
+    
+    data['redemption_codes'][code] = {
+        'reward_type': 'serial',
+        'item_name': item_name,
+        'max_uses': quantity,
+        'current_uses': 0,
+        'duration': duration.value,
+        'used_by': {},
+        'serial_pool': serial_pool,
+        'serial_assigned': {}  # 記錄每個用戶分配到的序號
+    }
+    
+    save_data()
+    
+    # 顯示前3個序號作為預覽
+    preview = '\n'.join(serial_pool[:3])
+    if quantity > 3:
+        preview += f'\n... 還有 {quantity - 3} 個'
+    
+    await interaction.response.send_message(
+        f"✅ **序號池兌換碼新增成功！**\n\n"
+        f"代碼：`{code}`\n"
+        f"道具：{item_name}\n"
+        f"序號數量：{quantity} 個（20碼格式）\n"
+        f"有效期：{duration.name}\n\n"
+        f"序號預覽：\n```\n{preview}\n```\n\n"
+        f"💡 玩家使用 `/redeem {code}` 即可自動獲得一組序號"
+    )
+
+@bot.tree.command(name="add_custom_serials", description="[管理員] 手動新增自訂序號到序號池")
+@app_commands.describe(
+    code="兌換碼名稱",
+    item_name="道具名稱",
+    serials="序號列表（用逗號分隔，支援任意格式）",
+    duration="有效期限"
+)
+@app_commands.choices(
+    duration=[
+        app_commands.Choice(name="永久", value="permanent"),
+        app_commands.Choice(name="每日", value="daily"),
+        app_commands.Choice(name="每週", value="weekly"),
+        app_commands.Choice(name="每月", value="monthly")
+    ]
+)
+async def add_custom_serials(
+    interaction: discord.Interaction,
+    code: str,
+    item_name: str,
+    serials: str,
+    duration: app_commands.Choice[str]
+):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ 只有管理員可使用此指令", ephemeral=True)
+        return
+    
+    if code in data['redemption_codes']:
+        await interaction.response.send_message("❌ 此兌換碼已存在！", ephemeral=True)
+        return
+    
+    # 解析序號列表
     serial_list = [s.strip() for s in serials.split(',') if s.strip()]
     
     if not serial_list:
@@ -631,14 +708,13 @@ async def add_serial_code(
     
     data['redemption_codes'][code] = {
         'reward_type': 'serial',
-        'reward_amount': 0,
+        'item_name': item_name,
         'max_uses': len(serial_list),
         'current_uses': 0,
         'duration': duration.value,
         'used_by': {},
         'serial_pool': serial_list,
-        'serial_used': {},
-        'serial_description': description
+        'serial_assigned': {}
     }
     
     save_data()
@@ -648,24 +724,25 @@ async def add_serial_code(
         preview += f'\n... 還有 {len(serial_list) - 5} 個'
     
     await interaction.response.send_message(
-        f"✅ **序號池兌換碼新增成功！**\n\n"
+        f"✅ **自訂序號池新增成功！**\n\n"
         f"代碼：`{code}`\n"
-        f"類型：序號派發\n"
-        f"描述：{description}\n"
+        f"道具：{item_name}\n"
         f"序號數量：{len(serial_list)}\n"
         f"有效期：{duration.name}\n\n"
         f"序號預覽：\n```\n{preview}\n```"
     )
 
-@bot.tree.command(name="add_serials", description="[管理員] 為現有序號池補充序號")
+@bot.tree.command(name="append_serials", description="[管理員] 為現有序號池補充序號")
 @app_commands.describe(
     code="兌換碼",
-    serials="要補充的序號（用逗號分隔）"
+    quantity="要補充的數量（自動生成）",
+    custom_serials="或手動輸入序號（用逗號分隔，優先使用此項）"
 )
-async def add_serials(
+async def append_serials(
     interaction: discord.Interaction,
     code: str,
-    serials: str
+    quantity: int = 0,
+    custom_serials: str = ""
 ):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ 只有管理員可使用此指令", ephemeral=True)
@@ -681,10 +758,20 @@ async def add_serials(
         await interaction.response.send_message("❌ 此兌換碼不是序號池類型！", ephemeral=True)
         return
     
-    new_serials = [s.strip() for s in serials.split(',') if s.strip()]
+    new_serials = []
     
-    if not new_serials:
-        await interaction.response.send_message("❌ 請提供至少一個序號！", ephemeral=True)
+    # 優先使用自訂序號
+    if custom_serials.strip():
+        new_serials = [s.strip() for s in custom_serials.split(',') if s.strip()]
+    elif quantity > 0:
+        # 自動生成指定數量的序號
+        for _ in range(quantity):
+            new_serials.append(generate_game_serial())
+    else:
+        await interaction.response.send_message(
+            "❌ 請指定要生成的數量或提供自訂序號！",
+            ephemeral=True
+        )
         return
     
     code_data['serial_pool'].extend(new_serials)
@@ -692,13 +779,15 @@ async def add_serials(
     
     save_data()
     
+    remaining = len(code_data['serial_pool']) - code_data['current_uses']
+    
     await interaction.response.send_message(
         f"✅ **序號補充成功！**\n\n"
         f"代碼：`{code}`\n"
         f"新增數量：{len(new_serials)}\n"
         f"當前總數：{len(code_data['serial_pool'])}\n"
-        f"已使用：{code_data['current_uses']}\n"
-        f"剩餘：{len(code_data['serial_pool']) - code_data['current_uses']}"
+        f"已派發：{code_data['current_uses']}\n"
+        f"剩餘可用：{remaining}"
     )
 
 @bot.tree.command(name="redeem_status", description="[管理員] 查看兌換碼使用狀態")
@@ -724,13 +813,13 @@ async def redeem_status(interaction: discord.Interaction, code: str):
         
         embed.add_field(
             name="📦 類型",
-            value=f"序號派發\n{code_data['serial_description']}",
+            value=f"序號派發：{code_data['item_name']}",
             inline=False
         )
         
         embed.add_field(
             name="📊 使用情況",
-            value=f"已使用：{code_data['current_uses']}/{len(code_data['serial_pool'])}\n剩餘：{remaining}",
+            value=f"已派發：{code_data['current_uses']}/{len(code_data['serial_pool'])}\n剩餘：{remaining}",
             inline=True
         )
         
@@ -740,11 +829,12 @@ async def redeem_status(interaction: discord.Interaction, code: str):
             inline=True
         )
         
+        # 顯示剩餘序號預覽
         if remaining > 0:
             remaining_serials = code_data['serial_pool'][code_data['current_uses']:]
-            preview = '\n'.join(remaining_serials[:5])
-            if len(remaining_serials) > 5:
-                preview += f"\n... 還有 {len(remaining_serials) - 5} 個"
+            preview = '\n'.join(remaining_serials[:3])
+            if len(remaining_serials) > 3:
+                preview += f"\n... 還有 {len(remaining_serials) - 3} 個"
             
             embed.add_field(
                 name="📋 剩餘序號預覽",
@@ -752,24 +842,25 @@ async def redeem_status(interaction: discord.Interaction, code: str):
                 inline=False
             )
         
-        if code_data['serial_used']:
-            used_text = ""
+        # 顯示派發記錄
+        if code_data['serial_assigned']:
+            assigned_text = ""
             count = 0
-            for user_id, serial in list(code_data['serial_used'].items())[:5]:
+            for user_id, serial in list(code_data['serial_assigned'].items())[:5]:
                 try:
                     user = await bot.fetch_user(int(user_id))
-                    used_text += f"• {user.name}: `{serial}`\n"
+                    assigned_text += f"• {user.name}: `{serial}`\n"
                     count += 1
                 except:
                     pass
             
             if count > 0:
-                if len(code_data['serial_used']) > 5:
-                    used_text += f"\n... 還有 {len(code_data['serial_used']) - 5} 筆記錄"
+                if len(code_data['serial_assigned']) > 5:
+                    assigned_text += f"\n... 還有 {len(code_data['serial_assigned']) - 5} 筆記錄"
                 
                 embed.add_field(
                     name="📝 派發記錄",
-                    value=used_text,
+                    value=assigned_text,
                     inline=False
                 )
     
@@ -835,7 +926,7 @@ async def list_redeem_codes(interaction: discord.Interaction):
             remaining = len(code_data['serial_pool']) - code_data['current_uses']
             value = (
                 f"類型：📦 序號派發\n"
-                f"描述：{code_data['serial_description']}\n"
+                f"道具：{code_data['item_name']}\n"
                 f"剩餘：{remaining}/{len(code_data['serial_pool'])}"
             )
         else:
@@ -854,7 +945,7 @@ async def list_redeem_codes(interaction: discord.Interaction):
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="redeem", description="兌換序號")
+@bot.tree.command(name="redeem", description="兌換序號或積分")
 @require_verified()
 @app_commands.describe(code="兌換碼")
 async def redeem(interaction: discord.Interaction, code: str):
@@ -868,6 +959,7 @@ async def redeem(interaction: discord.Interaction, code: str):
     
     code_data = data['redemption_codes'][code]
     
+    # 檢查是否還有可用名額
     if code_data['reward_type'] == 'serial':
         if code_data['current_uses'] >= len(code_data['serial_pool']):
             await interaction.response.send_message("❌ 序號已全部發完！", ephemeral=True)
@@ -877,6 +969,7 @@ async def redeem(interaction: discord.Interaction, code: str):
             await interaction.response.send_message("❌ 此兌換碼已達使用上限！", ephemeral=True)
             return
     
+    # 檢查使用時間限制
     duration = code_data['duration']
     now = datetime.now()
     
@@ -901,40 +994,58 @@ async def redeem(interaction: discord.Interaction, code: str):
     
     reward_type = code_data['reward_type']
     
+    # 處理序號派發
     if reward_type == 'serial':
         serial_index = code_data['current_uses']
         assigned_serial = code_data['serial_pool'][serial_index]
         
+        # 記錄使用
         code_data['used_by'][user_id] = now.isoformat()
-        code_data['serial_used'][user_id] = assigned_serial
+        code_data['serial_assigned'][user_id] = assigned_serial
         code_data['current_uses'] += 1
+        
+        # 保存到用戶的序號記錄中
+        if 'my_serials' not in user_data:
+            user_data['my_serials'] = []
+        
+        user_data['my_serials'].append({
+            'code': code,
+            'item_name': code_data['item_name'],
+            'serial': assigned_serial,
+            'redeemed_at': now.isoformat()
+        })
         
         save_data()
         
+        # 優先嘗試私訊發送
         try:
             await interaction.user.send(
                 f"🎁 **兌換成功！**\n\n"
-                f"你獲得了：{code_data['serial_description']}\n\n"
+                f"道具：{code_data['item_name']}\n"
                 f"序號：`{assigned_serial}`\n\n"
-                f"⚠️ 請妥善保管你的序號，此訊息不會再次顯示！"
+                f"⚠️ 請妥善保管你的序號！\n"
+                f"💡 使用 `/my_serials` 可隨時查看你的所有序號"
             )
             
             await interaction.response.send_message(
                 f"✅ **兌換成功！**\n\n"
                 f"你的序號已通過私訊發送給你！\n"
-                f"請查看私訊並妥善保管序號",
+                f"請查看私訊並妥善保管序號\n\n"
+                f"💡 使用 `/my_serials` 可隨時查看",
                 ephemeral=True
             )
         except discord.Forbidden:
+            # 如果無法私訊，則在當前頻道顯示
             await interaction.response.send_message(
                 f"✅ **兌換成功！**\n\n"
-                f"類型：{code_data['serial_description']}\n"
+                f"道具：{code_data['item_name']}\n"
                 f"序號：`{assigned_serial}`\n\n"
                 f"⚠️ 請立即複製並保存你的序號！\n"
-                f"💡 建議開啟私訊功能，以便接收未來的序號",
+                f"💡 建議開啟私訊功能，使用 `/my_serials` 可查看所有序號",
                 ephemeral=True
             )
     
+    # 處理積分獎勵
     else:
         reward_amount = code_data['reward_amount']
         
@@ -957,26 +1068,17 @@ async def redeem(interaction: discord.Interaction, code: str):
             ephemeral=True
         )
 
-@bot.tree.command(name="my_serials", description="查看我已兌換的序號")
+@bot.tree.command(name="my_serials", description="查看我已兌換的所有序號")
 @require_verified()
 async def my_serials(interaction: discord.Interaction):
     init_user(interaction.user.id)
     user_id = str(interaction.user.id)
+    user_data = data['users'][user_id]
     
-    my_serials = []
-    
-    for code, code_data in data['redemption_codes'].items():
-        if code_data['reward_type'] == 'serial' and user_id in code_data['serial_used']:
-            my_serials.append({
-                'code': code,
-                'description': code_data['serial_description'],
-                'serial': code_data['serial_used'][user_id],
-                'date': code_data['used_by'][user_id]
-            })
-    
-    if not my_serials:
+    if 'my_serials' not in user_data or not user_data['my_serials']:
         await interaction.response.send_message(
-            "你還沒有兌換過任何序號",
+            "你還沒有兌換過任何序號\n\n"
+            "💡 使用 `/redeem` 兌換序號",
             ephemeral=True
         )
         return
@@ -987,17 +1089,54 @@ async def my_serials(interaction: discord.Interaction):
         color=discord.Color.green()
     )
     
-    for item in my_serials:
-        date = datetime.fromisoformat(item['date']).strftime('%Y-%m-%d %H:%M')
+    for item in user_data['my_serials']:
+        date = datetime.fromisoformat(item['redeemed_at']).strftime('%Y-%m-%d %H:%M')
         embed.add_field(
-            name=f"{item['description']}",
-            value=f"兌換碼：`{item['code']}`\n序號：`{item['serial']}`\n兌換時間：{date}",
+            name=f"📦 {item['item_name']}",
+            value=(
+                f"兌換碼：`{item['code']}`\n"
+                f"序號：`{item['serial']}`\n"
+                f"兌換時間：{date}"
+            ),
             inline=False
         )
     
-    embed.set_footer(text="⚠️ 請妥善保管你的序號")
+    embed.set_footer(text="⚠️ 請妥善保管你的序號，可以截圖保存")
     
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    # 優先嘗試私訊發送
+    try:
+        await interaction.user.send(embed=embed)
+        await interaction.response.send_message(
+            "✅ 你的序號記錄已通過私訊發送給你！",
+            ephemeral=True
+        )
+    except discord.Forbidden:
+        # 如果無法私訊，則在當前頻道顯示
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="delete_redeem_code", description="[管理員] 刪除兌換碼")
+@app_commands.describe(code="要刪除的兌換碼")
+async def delete_redeem_code(interaction: discord.Interaction, code: str):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ 只有管理員可使用此指令", ephemeral=True)
+        return
+    
+    if code not in data['redemption_codes']:
+        await interaction.response.send_message("❌ 此兌換碼不存在！", ephemeral=True)
+        return
+    
+    code_data = data['redemption_codes'][code]
+    code_type = "序號池" if code_data['reward_type'] == 'serial' else "積分"
+    
+    del data['redemption_codes'][code]
+    save_data()
+    
+    await interaction.response.send_message(
+        f"✅ **兌換碼已刪除！**\n\n"
+        f"代碼：`{code}`\n"
+        f"類型：{code_type}",
+        ephemeral=True
+    )
 
 # ==================== 戰鬥系統 ====================
 @bot.tree.command(name="upgrade_gear", description="提升戰鬥屬性")
@@ -1237,9 +1376,10 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(
         name="🎁 兌換系統",
         value=(
-            "`/redeem` - 兌換序號\n"
-            "`/my_serials` - 查看我的序號\n"
-            "💡 可兌換遊戲/活動積分或道具序號"
+            "`/redeem` - 兌換序號或積分\n"
+            "`/my_serials` - 查看我的所有序號\n"
+            "💡 支援積分獎勵和道具序號派發\n"
+            "💡 序號為20碼格式，妥善保管"
         ),
         inline=False
     )
@@ -1254,40 +1394,25 @@ async def help_command(interaction: discord.Interaction):
         inline=False
     )
     
+    embed.add_field(
+        name="🔧 管理員指令",
+        value=(
+            "`/add_serial_code` - 新增序號池（自動生成）\n"
+            "`/add_custom_serials` - 新增序號池（手動輸入）\n"
+            "`/append_serials` - 補充序號到現有池\n"
+            "`/redeem_status` - 查看兌換碼狀態\n"
+            "`/list_redeem_codes` - 列出所有兌換碼"
+        ),
+        inline=False
+    )
+    
     await interaction.response.send_message(embed=embed)
 
 # ==================== 啟動機器人 ====================
 @bot.event
 async def on_ready():
     print(f'✅ 機器人已登入: {bot.user}')
-    
-    try:
-        synced = await bot.tree.sync()
-        print(f'✅ 成功同步 {len(synced)} 個指令')
-    except Exception as e:
-        print(f'❌ 指令同步失敗: {e}')
-
-# ==================== Token 設定 ====================
-# # 方法1: 使用環境變數（推薦）
-# import os
-# from dotenv import load_dotenv
-
-# load_dotenv()
-# TOKEN = os.getenv('DISCORD_BOT_TOKEN')
-
-# if not TOKEN:
-#     print("❌ 錯誤: 找不到 DISCORD_BOT_TOKEN")
-#     print("請確認:")
-#     print("1. 已創建 .env 檔案")
-#     print("2. .env 檔案中有 DISCORD_BOT_TOKEN=你的token")
-#     print("3. 已安裝 python-dotenv (pip install python-dotenv)")
-#     exit(1)
-
-# bot.run(TOKEN)
-# ==================== 啟動機器人 ====================
-@bot.event
-async def on_ready():
-    print(f'✅ 機器人已登入: {bot.user}')
+    print(f'📝 序號格式：20碼（XXXX-XXXX-XXXX-XXXX-XXXX）')
     
     try:
         synced = await bot.tree.sync()
