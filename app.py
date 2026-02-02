@@ -20,6 +20,14 @@ bot = commands.Bot(command_prefix='/', intents=intents)
 # ==================== 資料存儲 ====================
 DATA_FILE = 'bot_data.json'
 
+# ==================== 管理員設定 ====================
+# 在這裡填入你的 Discord 用戶 ID（可以填入多個）
+# 如何獲取你的 Discord ID：開啟開發者模式 → 右鍵點擊你的名字 → 複製 ID
+ADMIN_USER_IDS = [
+    # 範例：123456789012345678,
+    # 在這裡填入你的用戶 ID
+]
+
 def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
@@ -76,6 +84,18 @@ def generate_game_serial():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=20))
 
 # ==================== 權限檢查裝飾器 ====================
+def is_admin(interaction: discord.Interaction) -> bool:
+    """檢查是否為管理員（Discord權限或自訂列表）"""
+    # 方法1: 檢查Discord管理員權限
+    if interaction.user.guild_permissions.administrator:
+        return True
+    
+    # 方法2: 檢查是否在自訂管理員列表中
+    if interaction.user.id in ADMIN_USER_IDS:
+        return True
+    
+    return False
+
 def require_verified():
     """要求用戶已通過驗證"""
     async def predicate(interaction: discord.Interaction) -> bool:
@@ -163,7 +183,7 @@ async def on_raw_reaction_add(payload):
 @bot.tree.command(name="set_verification_channel", description="[管理員] 設置任務提交頻道")
 @app_commands.describe(channel="任務提交頻道")
 async def set_verification_channel(interaction: discord.Interaction, channel: discord.TextChannel):
-    if not interaction.user.guild_permissions.administrator:
+    if not is_admin(interaction):
         await interaction.response.send_message("❌ 只有管理員可使用此指令", ephemeral=True)
         return
     
@@ -178,7 +198,7 @@ async def set_verification_channel(interaction: discord.Interaction, channel: di
 @bot.tree.command(name="set_verified_role", description="[管理員] 設置驗證通過後的身分組")
 @app_commands.describe(role="驗證身分組")
 async def set_verified_role(interaction: discord.Interaction, role: discord.Role):
-    if not interaction.user.guild_permissions.administrator:
+    if not is_admin(interaction):
         await interaction.response.send_message("❌ 只有管理員可使用此指令", ephemeral=True)
         return
     
@@ -571,7 +591,7 @@ async def add_redeem_code(
     max_uses: int,
     duration: app_commands.Choice[str]
 ):
-    if not interaction.user.guild_permissions.administrator:
+    if not is_admin(interaction):
         await interaction.response.send_message("❌ 只有管理員可使用此指令", ephemeral=True)
         return
     
@@ -620,7 +640,7 @@ async def add_serial_code(
     quantity: int,
     duration: app_commands.Choice[str]
 ):
-    if not interaction.user.guild_permissions.administrator:
+    if not is_admin(interaction):
         await interaction.response.send_message("❌ 只有管理員可使用此指令", ephemeral=True)
         return
     
@@ -687,7 +707,7 @@ async def add_custom_serials(
     serials: str,
     duration: app_commands.Choice[str]
 ):
-    if not interaction.user.guild_permissions.administrator:
+    if not is_admin(interaction):
         await interaction.response.send_message("❌ 只有管理員可使用此指令", ephemeral=True)
         return
     
@@ -740,7 +760,7 @@ async def append_serials(
     quantity: int = 0,
     custom_serials: str = ""
 ):
-    if not interaction.user.guild_permissions.administrator:
+    if not is_admin(interaction):
         await interaction.response.send_message("❌ 只有管理員可使用此指令", ephemeral=True)
         return
     
@@ -789,7 +809,7 @@ async def append_serials(
 @bot.tree.command(name="redeem_status", description="[管理員] 查看兌換碼使用狀態")
 @app_commands.describe(code="兌換碼")
 async def redeem_status(interaction: discord.Interaction, code: str):
-    if not interaction.user.guild_permissions.administrator:
+    if not is_admin(interaction):
         await interaction.response.send_message("❌ 只有管理員可使用此指令", ephemeral=True)
         return
     
@@ -904,7 +924,7 @@ async def redeem_status(interaction: discord.Interaction, code: str):
 
 @bot.tree.command(name="list_redeem_codes", description="[管理員] 列出所有兌換碼")
 async def list_redeem_codes(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator:
+    if not is_admin(interaction):
         await interaction.response.send_message("❌ 只有管理員可使用此指令", ephemeral=True)
         return
     
@@ -1113,7 +1133,7 @@ async def my_serials(interaction: discord.Interaction):
 @bot.tree.command(name="delete_redeem_code", description="[管理員] 刪除兌換碼")
 @app_commands.describe(code="要刪除的兌換碼")
 async def delete_redeem_code(interaction: discord.Interaction, code: str):
-    if not interaction.user.guild_permissions.administrator:
+    if not is_admin(interaction):
         await interaction.response.send_message("❌ 只有管理員可使用此指令", ephemeral=True)
         return
     
