@@ -321,7 +321,7 @@ python bot.py
 ## 序號系統說明
 
 ### 序號格式
-- **自動生成**：20碼格式（XXXX-XXXX-XXXX-XXXX-XXXX）
+- **自動生成**：20碼純文字格式（連續20個大寫字母和數字）
 - **手動輸入**：支援任意格式
 
 ### 序號派發流程
@@ -373,7 +373,7 @@ python bot.py
         {
           "code": "GIFT2024",
           "item_name": "遊戲月卡",
-          "serial": "A3F9-K2L8-M4N7-P1Q6-R5T2",
+          "serial": "A3F9K2L8M4N7P1Q6R5T2",
           "redeemed_at": "2024-01-01T12:00:00"
         }
       ]
@@ -401,11 +401,11 @@ python bot.py
         "user_id": "2024-01-01T12:00:00"
       },
       "serial_pool": [
-        "A3F9-K2L8-M4N7-P1Q6-R5T2",
-        "B8G4-L9M3-N2P7-Q6R1-S4T9"
+        "A3F9K2L8M4N7P1Q6R5T2",
+        "B8G4L9M3N2P7Q6R1S4T9"
       ],
       "serial_assigned": {
-        "user_id": "A3F9-K2L8-M4N7-P1Q6-R5T2"
+        "user_id": "A3F9K2L8M4N7P1Q6R5T2"
       }
     }
   },
@@ -569,7 +569,7 @@ TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 
 ## 更新日誌
 
-### v2.0.0 (2026-02-02)
+### v2.0.0 (2024-02-02)
 - 新增完整序號系統
 - 自動生成20碼序號功能
 - 序號池管理系統
@@ -577,7 +577,7 @@ TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 - 序號補充機制
 - 優化安全性（私訊發送）
 
-### v1.0.0 (2026-01-01)
+### v1.0.0 (2024-01-01)
 - 初始版本發布
 - 新人驗證系統
 - 邀請系統

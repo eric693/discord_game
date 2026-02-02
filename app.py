@@ -72,12 +72,8 @@ def generate_invite_code():
             return code
 
 def generate_game_serial():
-    """生成20碼遊戲序號（格式：XXXX-XXXX-XXXX-XXXX-XXXX）"""
-    segments = []
-    for _ in range(5):
-        segment = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
-        segments.append(segment)
-    return '-'.join(segments)
+    """生成20碼遊戲序號（純文字格式，無短橫線）"""
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=20))
 
 # ==================== 權限檢查裝飾器 ====================
 def require_verified():
@@ -1412,7 +1408,7 @@ async def help_command(interaction: discord.Interaction):
 @bot.event
 async def on_ready():
     print(f'✅ 機器人已登入: {bot.user}')
-    print(f'📝 序號格式：20碼（XXXX-XXXX-XXXX-XXXX-XXXX）')
+    print(f'📝 序號格式：20碼純文字（無短橫線）')
     
     try:
         synced = await bot.tree.sync()
