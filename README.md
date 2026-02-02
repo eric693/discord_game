@@ -210,17 +210,17 @@ python bot.py
 
 #### 積分兌換碼
 ```
-/add_redeem_code code:WELCOME2024 reward_type:遊戲積分 reward_amount:100 max_uses:50 duration:永久
+/add_redeem_code code:WELCOME2026 reward_type:遊戲積分 reward_amount:100 max_uses:50 duration:永久
 ```
 
 #### 序號池兌換碼（自動生成20碼序號）
 ```
-/add_serial_code code:GIFT2024 item_name:遊戲月卡 quantity:50 duration:永久
+/add_serial_code code:GIFT2026 item_name:遊戲月卡 quantity:50 duration:永久
 ```
 
 #### 自訂序號池（手動輸入序號）
 ```
-/add_custom_serials code:STEAM2024 item_name:Steam激活碼 serials:KEY1-AAA-BBB,KEY2-CCC-DDD duration:永久
+/add_custom_serials code:STEAM2026 item_name:Steam激活碼 serials:KEY1-AAA-BBB,KEY2-CCC-DDD duration:永久
 ```
 
 ## 指令列表
@@ -357,7 +357,7 @@ python bot.py
       "invite_code": "ABC12345",
       "invited_by": "inviter_id",
       "invited_users": ["user1", "user2"],
-      "last_checkin": "2024-01-01T12:00:00",
+      "last_checkin": "2026-01-01T12:00:00",
       "checkin_streak": 5,
       "weekly_checkin": [true, true, false, false, false, false, false],
       "gear": {
@@ -366,15 +366,15 @@ python bot.py
         "hp": 100
       },
       "mineral_level": 3,
-      "mineral_last_claim": "2024-01-01T00:00:00",
+      "mineral_last_claim": "2026-01-01T00:00:00",
       "lottery_tickets": [],
       "redemption_history": {},
       "my_serials": [
         {
-          "code": "GIFT2024",
+          "code": "GIFT2026",
           "item_name": "遊戲月卡",
           "serial": "A3F9K2L8M4N7P1Q6R5T2",
-          "redeemed_at": "2024-01-01T12:00:00"
+          "redeemed_at": "2026-01-01T12:00:00"
         }
       ]
     }
@@ -388,17 +388,17 @@ python bot.py
       "current_uses": 10,
       "duration": "permanent",
       "used_by": {
-        "user_id": "2024-01-01T12:00:00"
+        "user_id": "2026-01-01T12:00:00"
       }
     },
-    "GIFT2024": {
+    "GIFT2026": {
       "reward_type": "serial",
       "item_name": "遊戲月卡",
       "max_uses": 50,
       "current_uses": 5,
       "duration": "permanent",
       "used_by": {
-        "user_id": "2024-01-01T12:00:00"
+        "user_id": "2026-01-01T12:00:00"
       },
       "serial_pool": [
         "A3F9K2L8M4N7P1Q6R5T2",
@@ -569,7 +569,7 @@ TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 
 ## 更新日誌
 
-### v2.0.0 (2024-02-02)
+### v2.0.0 (2026-02-02)
 - 新增完整序號系統
 - 自動生成20碼序號功能
 - 序號池管理系統
@@ -577,7 +577,7 @@ TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 - 序號補充機制
 - 優化安全性（私訊發送）
 
-### v1.0.0 (2024-01-01)
+### v1.0.0 (2026-01-01)
 - 初始版本發布
 - 新人驗證系統
 - 邀請系統
