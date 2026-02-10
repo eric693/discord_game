@@ -21,11 +21,8 @@ bot = commands.Bot(command_prefix='/', intents=intents)
 DATA_FILE = 'bot_data.json'
 
 # ==================== 管理員設定 ====================
-# 在這裡填入你的 Discord 用戶 ID（可以填入多個）
-# 如何獲取你的 Discord ID：開啟開發者模式 → 右鍵點擊你的名字 → 複製 ID
 ADMIN_USER_IDS = [
-    1467542794003419329,
-    # 在這裡填入你的用戶 ID
+    775343433278816268,
 ]
 
 def load_data():
@@ -51,7 +48,7 @@ def init_user(user_id: int):
     user_id = str(user_id)
     if user_id not in data['users']:
         data['users'][user_id] = {
-            'game_points': 0,
+            'game_points': 100,  # 初始遊戲積分
             'activity_points': 0,
             'invite_code': generate_invite_code(),
             'invited_by': None,
@@ -60,15 +57,21 @@ def init_user(user_id: int):
             'checkin_streak': 0,
             'weekly_checkin': [False] * 7,
             'gear': {
-                'attack': 0,
-                'defense': 0,
+                'attack': 10,
+                'defense': 10,
                 'hp': 100
             },
             'mineral_level': 0,
             'mineral_last_claim': None,
             'lottery_tickets': [],
             'redemption_history': {},
-            'my_serials': []  # 新增：儲存用戶獲得的所有序號
+            'my_serials': [],
+            'battle_stats': {
+                'wins': 0,
+                'losses': 0,
+                'total_earned': 0,
+                'total_lost': 0
+            }
         }
         save_data()
 
@@ -86,20 +89,15 @@ def generate_game_serial():
 # ==================== 權限檢查裝飾器 ====================
 def is_admin(interaction: discord.Interaction) -> bool:
     """檢查是否為管理員（Discord權限或自訂列表）"""
-    # 方法1: 檢查Discord管理員權限
     if interaction.user.guild_permissions.administrator:
         return True
-    
-    # 方法2: 檢查是否在自訂管理員列表中
     if interaction.user.id in ADMIN_USER_IDS:
         return True
-    
     return False
 
 def require_verified():
     """要求用戶已通過驗證（管理員自動通過）"""
     async def predicate(interaction: discord.Interaction) -> bool:
-        # 管理員自動通過驗證檢查
         if is_admin(interaction):
             return True
         
@@ -130,24 +128,20 @@ async def on_raw_reaction_add(payload):
     if str(payload.emoji) != "✅":
         return
     
-    # 檢查是否在驗證頻道
     if data.get('verification_channel') != str(payload.channel_id):
         return
     
     guild = bot.get_guild(payload.guild_id)
     member = guild.get_member(payload.user_id)
     
-    # 檢查是否為管理員
-    if not member.guild_permissions.administrator:
+    if not (member.guild_permissions.administrator or member.id in ADMIN_USER_IDS):
         return
     
     channel = bot.get_channel(payload.channel_id)
     message = await channel.fetch_message(payload.message_id)
     
-    # 獲取發文者
     author = message.author
     
-    # 獲取驗證身分組
     verified_role_id = data.get('verified_role')
     if not verified_role_id:
         await channel.send("❌ 尚未設置驗證身分組！請使用 `/set_verified_role` 設置")
@@ -158,7 +152,6 @@ async def on_raw_reaction_add(payload):
         await channel.send("❌ 找不到驗證身分組！")
         return
     
-    # 給予身分組
     try:
         await author.add_roles(verified_role)
         await channel.send(
@@ -166,7 +159,6 @@ async def on_raw_reaction_add(payload):
             f"現在可以使用所有機器人功能了！"
         )
         
-        # 私訊通知
         try:
             await author.send(
                 f"🎉 **恭喜通過驗證！**\n\n"
@@ -225,7 +217,6 @@ async def my_invite(interaction: discord.Interaction):
     invited_users = user_data['invited_users']
     invited_count = len(invited_users)
     
-    # 計算邀請獎勵
     invite_rewards = (invited_count // 2) * 10
     
     embed = discord.Embed(
@@ -427,67 +418,178 @@ async def checkin(interaction: discord.Interaction):
     
     await interaction.response.send_message(embed=embed)
 
-# ==================== 遊戲系統 ====================
-class GameMenu(discord.ui.View):
-    def __init__(self, user_id: int):
-        super().__init__(timeout=180)
-        self.user_id = user_id
+# ==================== 完整踩地雷遊戲 ====================
+class MinesweeperButton(discord.ui.Button):
+    def __init__(self, x: int, y: int, is_mine: bool):
+        super().__init__(style=discord.ButtonStyle.secondary, label="⬜", row=y)
+        self.x = x
+        self.y = y
+        self.is_mine = is_mine
+        self.revealed = False
+        self.flagged = False
     
-    @discord.ui.button(label="💣 踩地雷", style=discord.ButtonStyle.primary)
-    async def minesweeper_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
+    async def callback(self, interaction: discord.Interaction):
+        view: MinesweeperView = self.view
+        
+        if interaction.user.id != view.player_id:
             await interaction.response.send_message("這不是你的遊戲！", ephemeral=True)
             return
-        await interaction.response.send_message("請使用 `/minesweeper` 開始踩地雷遊戲", ephemeral=True)
-    
-    @discord.ui.button(label="⛏️ 礦產", style=discord.ButtonStyle.success)
-    async def mineral_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("這不是你的遊戲！", ephemeral=True)
+        
+        if self.revealed or self.flagged:
+            await interaction.response.send_message("此格已被翻開或標記！", ephemeral=True)
             return
-        await interaction.response.send_message("請使用 `/mineral` 開始礦產系統", ephemeral=True)
+        
+        self.revealed = True
+        
+        if self.is_mine:
+            # 踩到地雷
+            self.label = "💣"
+            self.style = discord.ButtonStyle.danger
+            view.game_over = True
+            view.won = False
+            
+            # 顯示所有地雷
+            for button in view.children:
+                if isinstance(button, MinesweeperButton) and button.is_mine:
+                    button.label = "💣"
+                    button.style = discord.ButtonStyle.danger
+                    button.disabled = True
+            
+            # 扣除積分
+            user_data = data['users'][str(view.player_id)]
+            if view.point_type == "game":
+                user_data['game_points'] -= view.bet_amount
+            else:
+                user_data['activity_points'] -= view.bet_amount
+            save_data()
+            
+            embed = discord.Embed(
+                title="💣 踩到地雷了！",
+                description=f"你輸了 {view.bet_amount} {'遊戲' if view.point_type == 'game' else '活動'}積分",
+                color=discord.Color.red()
+            )
+            embed.add_field(
+                name="剩餘積分",
+                value=f"{user_data['game_points'] if view.point_type == 'game' else user_data['activity_points']}",
+                inline=False
+            )
+            
+            for button in view.children:
+                button.disabled = True
+            
+            await interaction.response.edit_message(embed=embed, view=view)
+            view.stop()
+            
+        else:
+            # 安全格子
+            mines_nearby = view.count_nearby_mines(self.x, self.y)
+            self.label = str(mines_nearby) if mines_nearby > 0 else "✅"
+            self.style = discord.ButtonStyle.success
+            self.disabled = True
+            
+            view.safe_revealed += 1
+            
+            # 檢查是否獲勝
+            if view.safe_revealed >= view.safe_cells:
+                view.game_over = True
+                view.won = True
+                
+                # 獲得獎勵
+                multiplier = 1.5
+                reward = int(view.bet_amount * multiplier)
+                user_data = data['users'][str(view.player_id)]
+                if view.point_type == "game":
+                    user_data['game_points'] += reward
+                else:
+                    user_data['activity_points'] += reward
+                save_data()
+                
+                embed = discord.Embed(
+                    title="🎉 恭喜獲勝！",
+                    description=f"你獲得了 {reward} {'遊戲' if view.point_type == 'game' else '活動'}積分！",
+                    color=discord.Color.gold()
+                )
+                embed.add_field(
+                    name="當前積分",
+                    value=f"{user_data['game_points'] if view.point_type == 'game' else user_data['activity_points']}",
+                    inline=False
+                )
+                
+                for button in view.children:
+                    button.disabled = True
+                
+                await interaction.response.edit_message(embed=embed, view=view)
+                view.stop()
+            else:
+                await interaction.response.edit_message(view=view)
 
-@bot.tree.command(name="game", description="遊戲選單")
-@require_verified()
-async def game(interaction: discord.Interaction):
-    init_user(interaction.user.id)
-    user_data = data['users'][str(interaction.user.id)]
+class MinesweeperView(discord.ui.View):
+    def __init__(self, player_id: int, bet_amount: int, point_type: str, grid_size: int = 5, mine_count: int = 5):
+        super().__init__(timeout=300)
+        self.player_id = player_id
+        self.bet_amount = bet_amount
+        self.point_type = point_type
+        self.grid_size = grid_size
+        self.mine_count = mine_count
+        self.safe_cells = grid_size * grid_size - mine_count
+        self.safe_revealed = 0
+        self.game_over = False
+        self.won = False
+        
+        # 生成地雷位置
+        positions = [(x, y) for x in range(grid_size) for y in range(grid_size)]
+        mine_positions = random.sample(positions, mine_count)
+        
+        # 創建按鈕
+        for y in range(grid_size):
+            for x in range(grid_size):
+                is_mine = (x, y) in mine_positions
+                button = MinesweeperButton(x, y, is_mine)
+                self.add_item(button)
     
-    embed = discord.Embed(
-        title="🎮 遊戲中心",
-        description="選擇你想玩的遊戲",
-        color=discord.Color.purple()
-    )
-    
-    embed.add_field(
-        name="💰 你的積分",
-        value=f"🎮 遊戲積分：{user_data['game_points']}\n🎯 活動積分：{user_data['activity_points']}",
-        inline=False
-    )
-    
-    embed.add_field(
-        name="🎲 可用遊戲",
-        value=(
-            "💣 **踩地雷** - 高風險高回報\n"
-            "⛏️ **礦產** - 被動收入系統"
-        ),
-        inline=False
-    )
-    
-    view = GameMenu(interaction.user.id)
-    await interaction.response.send_message(embed=embed, view=view)
+    def count_nearby_mines(self, x: int, y: int) -> int:
+        """計算周圍8格的地雷數量"""
+        count = 0
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                if dx == 0 and dy == 0:
+                    continue
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < self.grid_size and 0 <= ny < self.grid_size:
+                    for button in self.children:
+                        if isinstance(button, MinesweeperButton):
+                            if button.x == nx and button.y == ny and button.is_mine:
+                                count += 1
+        return count
 
-@bot.tree.command(name="minesweeper", description="踩地雷遊戲")
+@bot.tree.command(name="minesweeper", description="踩地雷遊戲 - 避開地雷翻開所有安全格")
 @require_verified()
 @app_commands.describe(
     amount="下注金額",
-    point_type="使用的積分類型"
+    point_type="使用的積分類型",
+    difficulty="難度"
 )
-@app_commands.choices(point_type=[
-    app_commands.Choice(name="遊戲積分", value="game"),
-    app_commands.Choice(name="活動積分", value="activity")
-])
-async def minesweeper(interaction: discord.Interaction, amount: int, point_type: app_commands.Choice[str]):
+@app_commands.choices(
+    point_type=[
+        app_commands.Choice(name="遊戲積分", value="game"),
+        app_commands.Choice(name="活動積分", value="activity")
+    ],
+    difficulty=[
+        app_commands.Choice(name="簡單 (5x5, 5個雷)", value="easy"),
+        app_commands.Choice(name="中等 (5x5, 8個雷)", value="medium"),
+        app_commands.Choice(name="困難 (5x5, 12個雷)", value="hard")
+    ]
+)
+async def minesweeper(
+    interaction: discord.Interaction,
+    amount: int,
+    point_type: app_commands.Choice[str],
+    difficulty: app_commands.Choice[str] = None
+):
+    if amount <= 0:
+        await interaction.response.send_message("❌ 下注金額必須大於0！", ephemeral=True)
+        return
+    
     init_user(interaction.user.id)
     user_data = data['users'][str(interaction.user.id)]
     
@@ -506,10 +608,360 @@ async def minesweeper(interaction: discord.Interaction, amount: int, point_type:
             )
             return
     
-    await interaction.response.send_message(
-        f"🎮 踩地雷遊戲開始！\n下注：{amount} {'遊戲' if point_type.value == 'game' else '活動'}積分\n"
-        f"（簡化版本，實際遊戲邏輯需要進一步開發）"
+    # 設定難度
+    if difficulty is None:
+        mine_count = 5
+        diff_name = "簡單"
+    elif difficulty.value == "easy":
+        mine_count = 5
+        diff_name = "簡單"
+    elif difficulty.value == "medium":
+        mine_count = 8
+        diff_name = "中等"
+    else:
+        mine_count = 12
+        diff_name = "困難"
+    
+    view = MinesweeperView(interaction.user.id, amount, point_type.value, grid_size=5, mine_count=mine_count)
+    
+    embed = discord.Embed(
+        title="💣 踩地雷遊戲",
+        description=(
+            f"**難度：** {diff_name}\n"
+            f"**地雷數量：** {mine_count}\n"
+            f"**下注：** {amount} {'遊戲' if point_type.value == 'game' else '活動'}積分\n"
+            f"**獎勵倍率：** 1.5x\n\n"
+            f"點擊格子翻開，避開所有地雷即可獲勝！"
+        ),
+        color=discord.Color.blue()
     )
+    
+    await interaction.response.send_message(embed=embed, view=view)
+
+# ==================== 完整礦產系統 ====================
+@bot.tree.command(name="mineral", description="礦產系統 - 被動收入")
+@require_verified()
+async def mineral(interaction: discord.Interaction):
+    init_user(interaction.user.id)
+    user_data = data['users'][str(interaction.user.id)]
+    
+    level = user_data['mineral_level']
+    hourly_income = level * 5  # 每級每小時5積分
+    daily_income = hourly_income * 24
+    upgrade_cost = (level + 1) * 100
+    
+    embed = discord.Embed(
+        title="⛏️ 礦產系統",
+        description="被動收入系統，每小時自動產生積分",
+        color=discord.Color.orange()
+    )
+    
+    embed.add_field(
+        name="📊 當前等級",
+        value=f"Lv.{level}",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="💰 每小時收入",
+        value=f"{hourly_income} 遊戲積分",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="📅 每日收入",
+        value=f"{daily_income} 遊戲積分",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="⬆️ 升級費用",
+        value=f"{upgrade_cost} 遊戲積分",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="💎 你的積分",
+        value=f"{user_data['game_points']} 遊戲積分",
+        inline=True
+    )
+    
+    # 計算可領取的積分
+    last_claim = user_data.get('mineral_last_claim')
+    if last_claim and level > 0:
+        last_claim_time = datetime.fromisoformat(last_claim)
+        hours_passed = (datetime.now() - last_claim_time).total_seconds() / 3600
+        claimable = int(hours_passed * hourly_income)
+        
+        embed.add_field(
+            name="🎁 可領取",
+            value=f"{claimable} 遊戲積分",
+            inline=False
+        )
+    
+    embed.add_field(
+        name="💡 使用說明",
+        value=(
+            "• 使用 `/mineral_upgrade` 升級礦場\n"
+            "• 使用 `/mineral_claim` 領取收益\n"
+            "• 礦場會持續產生收益，記得定期領取！"
+        ),
+        inline=False
+    )
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="mineral_upgrade", description="升級礦場等級")
+@require_verified()
+async def mineral_upgrade(interaction: discord.Interaction):
+    init_user(interaction.user.id)
+    user_data = data['users'][str(interaction.user.id)]
+    
+    level = user_data['mineral_level']
+    upgrade_cost = (level + 1) * 100
+    
+    if user_data['game_points'] < upgrade_cost:
+        await interaction.response.send_message(
+            f"❌ 遊戲積分不足！需要 {upgrade_cost} 積分，你有 {user_data['game_points']} 積分",
+            ephemeral=True
+        )
+        return
+    
+    user_data['game_points'] -= upgrade_cost
+    user_data['mineral_level'] += 1
+    
+    new_level = user_data['mineral_level']
+    new_hourly = new_level * 5
+    new_daily = new_hourly * 24
+    
+    save_data()
+    
+    embed = discord.Embed(
+        title="⛏️ 礦場升級成功！",
+        color=discord.Color.green()
+    )
+    
+    embed.add_field(
+        name="🆕 新等級",
+        value=f"Lv.{new_level}",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="💰 新收入",
+        value=f"每小時 {new_hourly} 積分\n每日 {new_daily} 積分",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="💎 剩餘積分",
+        value=f"{user_data['game_points']} 遊戲積分",
+        inline=False
+    )
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="mineral_claim", description="領取礦產收益")
+@require_verified()
+async def mineral_claim(interaction: discord.Interaction):
+    init_user(interaction.user.id)
+    user_data = data['users'][str(interaction.user.id)]
+    
+    level = user_data['mineral_level']
+    
+    if level == 0:
+        await interaction.response.send_message(
+            "❌ 你還沒有礦場！請先使用 `/mineral_upgrade` 升級",
+            ephemeral=True
+        )
+        return
+    
+    last_claim = user_data.get('mineral_last_claim')
+    now = datetime.now()
+    
+    if last_claim:
+        last_claim_time = datetime.fromisoformat(last_claim)
+        hours_passed = (now - last_claim_time).total_seconds() / 3600
+        
+        if hours_passed < 1:
+            minutes_left = int((1 - hours_passed) * 60)
+            await interaction.response.send_message(
+                f"⏰ 請等待 {minutes_left} 分鐘後再領取！",
+                ephemeral=True
+            )
+            return
+        
+        claimable = int(hours_passed * level * 5)
+        max_claim = level * 5 * 24  # 最多累積24小時
+        claimable = min(claimable, max_claim)
+    else:
+        claimable = 0
+    
+    user_data['game_points'] += claimable
+    user_data['mineral_last_claim'] = now.isoformat()
+    
+    save_data()
+    
+    embed = discord.Embed(
+        title="💎 領取成功！",
+        color=discord.Color.gold()
+    )
+    
+    embed.add_field(
+        name="🎁 獲得",
+        value=f"{claimable} 遊戲積分",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="💰 當前積分",
+        value=f"{user_data['game_points']} 遊戲積分",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="⏰ 下次領取",
+        value="1小時後",
+        inline=False
+    )
+    
+    await interaction.response.send_message(embed=embed)
+
+# ==================== 遊戲選單 ====================
+class GameMenu(discord.ui.View):
+    def __init__(self, user_id: int):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+    
+    @discord.ui.button(label="💣 踩地雷", style=discord.ButtonStyle.primary)
+    async def minesweeper_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("這不是你的遊戲！", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            "請使用 `/minesweeper` 開始踩地雷遊戲\n"
+            "可選擇下注金額、積分類型和難度！",
+            ephemeral=True
+        )
+    
+    @discord.ui.button(label="⛏️ 礦產", style=discord.ButtonStyle.success)
+    async def mineral_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("這不是你的遊戲！", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            "請使用以下指令操作礦產系統：\n"
+            "• `/mineral` - 查看礦場狀態\n"
+            "• `/mineral_upgrade` - 升級礦場\n"
+            "• `/mineral_claim` - 領取收益",
+            ephemeral=True
+        )
+    
+    @discord.ui.button(label="📊 我的資料", style=discord.ButtonStyle.secondary)
+    async def stats_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("這不是你的遊戲！", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            "請使用 `/profile` 查看你的完整資料",
+            ephemeral=True
+        )
+
+@bot.tree.command(name="game", description="遊戲中心")
+@require_verified()
+async def game(interaction: discord.Interaction):
+    init_user(interaction.user.id)
+    user_data = data['users'][str(interaction.user.id)]
+    
+    embed = discord.Embed(
+        title="🎮 遊戲中心",
+        description="選擇你想玩的遊戲或查看資料",
+        color=discord.Color.purple()
+    )
+    
+    embed.add_field(
+        name="💰 你的積分",
+        value=f"🎮 遊戲積分：{user_data['game_points']}\n🎯 活動積分：{user_data['activity_points']}",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🎲 可用遊戲",
+        value=(
+            "💣 **踩地雷** - 高風險高回報，1.5倍獎勵\n"
+            "⛏️ **礦產** - 被動收入系統，持續產生積分"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="📈 戰鬥統計",
+        value=(
+            f"勝場：{user_data.get('battle_stats', {}).get('wins', 0)}\n"
+            f"敗場：{user_data.get('battle_stats', {}).get('losses', 0)}"
+        ),
+        inline=True
+    )
+    
+    view = GameMenu(interaction.user.id)
+    await interaction.response.send_message(embed=embed, view=view)
+
+# ==================== 個人資料 ====================
+@bot.tree.command(name="profile", description="查看個人資料")
+@require_verified()
+async def profile(interaction: discord.Interaction, user: discord.User = None):
+    target_user = user or interaction.user
+    init_user(target_user.id)
+    user_data = data['users'][str(target_user.id)]
+    
+    embed = discord.Embed(
+        title=f"📊 {target_user.name} 的資料",
+        color=discord.Color.blue()
+    )
+    
+    embed.set_thumbnail(url=target_user.display_avatar.url)
+    
+    embed.add_field(
+        name="💰 積分",
+        value=f"🎮 遊戲：{user_data['game_points']}\n🎯 活動：{user_data['activity_points']}",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="⚔️ 屬性",
+        value=f"攻擊：{user_data['gear']['attack']}\n防禦：{user_data['gear']['defense']}\n生命：{user_data['gear']['hp']}",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="⛏️ 礦場",
+        value=f"等級：Lv.{user_data['mineral_level']}\n時收：{user_data['mineral_level'] * 5}",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="🔥 打卡",
+        value=f"連續：{user_data['checkin_streak']}天",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="👥 邀請",
+        value=f"已邀請：{len(user_data['invited_users'])}人",
+        inline=True
+    )
+    
+    battle_stats = user_data.get('battle_stats', {})
+    total_battles = battle_stats.get('wins', 0) + battle_stats.get('losses', 0)
+    win_rate = (battle_stats.get('wins', 0) / total_battles * 100) if total_battles > 0 else 0
+    
+    embed.add_field(
+        name="⚔️ 戰鬥",
+        value=f"勝率：{win_rate:.1f}%\n戰績：{battle_stats.get('wins', 0)}勝{battle_stats.get('losses', 0)}敗",
+        inline=True
+    )
+    
+    await interaction.response.send_message(embed=embed)
 
 # ==================== 轉帳系統 ====================
 @bot.tree.command(name="transfer", description="轉帳積分給其他玩家")
@@ -656,7 +1108,6 @@ async def add_serial_code(
         await interaction.response.send_message("❌ 序號數量必須在 1-1000 之間！", ephemeral=True)
         return
     
-    # 自動生成指定數量的20碼序號
     serial_pool = []
     for _ in range(quantity):
         serial_pool.append(generate_game_serial())
@@ -669,12 +1120,11 @@ async def add_serial_code(
         'duration': duration.value,
         'used_by': {},
         'serial_pool': serial_pool,
-        'serial_assigned': {}  # 記錄每個用戶分配到的序號
+        'serial_assigned': {}
     }
     
     save_data()
     
-    # 顯示前3個序號作為預覽
     preview = '\n'.join(serial_pool[:3])
     if quantity > 3:
         preview += f'\n... 還有 {quantity - 3} 個'
@@ -719,7 +1169,6 @@ async def add_custom_serials(
         await interaction.response.send_message("❌ 此兌換碼已存在！", ephemeral=True)
         return
     
-    # 解析序號列表
     serial_list = [s.strip() for s in serials.split(',') if s.strip()]
     
     if not serial_list:
@@ -780,11 +1229,9 @@ async def append_serials(
     
     new_serials = []
     
-    # 優先使用自訂序號
     if custom_serials.strip():
         new_serials = [s.strip() for s in custom_serials.split(',') if s.strip()]
     elif quantity > 0:
-        # 自動生成指定數量的序號
         for _ in range(quantity):
             new_serials.append(generate_game_serial())
     else:
@@ -849,7 +1296,6 @@ async def redeem_status(interaction: discord.Interaction, code: str):
             inline=True
         )
         
-        # 顯示剩餘序號預覽
         if remaining > 0:
             remaining_serials = code_data['serial_pool'][code_data['current_uses']:]
             preview = '\n'.join(remaining_serials[:3])
@@ -862,7 +1308,6 @@ async def redeem_status(interaction: discord.Interaction, code: str):
                 inline=False
             )
         
-        # 顯示派發記錄
         if code_data['serial_assigned']:
             assigned_text = ""
             count = 0
@@ -979,7 +1424,6 @@ async def redeem(interaction: discord.Interaction, code: str):
     
     code_data = data['redemption_codes'][code]
     
-    # 檢查是否還有可用名額
     if code_data['reward_type'] == 'serial':
         if code_data['current_uses'] >= len(code_data['serial_pool']):
             await interaction.response.send_message("❌ 序號已全部發完！", ephemeral=True)
@@ -989,7 +1433,6 @@ async def redeem(interaction: discord.Interaction, code: str):
             await interaction.response.send_message("❌ 此兌換碼已達使用上限！", ephemeral=True)
             return
     
-    # 檢查使用時間限制
     duration = code_data['duration']
     now = datetime.now()
     
@@ -1014,17 +1457,14 @@ async def redeem(interaction: discord.Interaction, code: str):
     
     reward_type = code_data['reward_type']
     
-    # 處理序號派發
     if reward_type == 'serial':
         serial_index = code_data['current_uses']
         assigned_serial = code_data['serial_pool'][serial_index]
         
-        # 記錄使用
         code_data['used_by'][user_id] = now.isoformat()
         code_data['serial_assigned'][user_id] = assigned_serial
         code_data['current_uses'] += 1
         
-        # 保存到用戶的序號記錄中
         if 'my_serials' not in user_data:
             user_data['my_serials'] = []
         
@@ -1037,7 +1477,6 @@ async def redeem(interaction: discord.Interaction, code: str):
         
         save_data()
         
-        # 優先嘗試私訊發送
         try:
             await interaction.user.send(
                 f"🎁 **兌換成功！**\n\n"
@@ -1055,7 +1494,6 @@ async def redeem(interaction: discord.Interaction, code: str):
                 ephemeral=True
             )
         except discord.Forbidden:
-            # 如果無法私訊，則在當前頻道顯示
             await interaction.response.send_message(
                 f"✅ **兌換成功！**\n\n"
                 f"道具：{code_data['item_name']}\n"
@@ -1065,7 +1503,6 @@ async def redeem(interaction: discord.Interaction, code: str):
                 ephemeral=True
             )
     
-    # 處理積分獎勵
     else:
         reward_amount = code_data['reward_amount']
         
@@ -1123,7 +1560,6 @@ async def my_serials(interaction: discord.Interaction):
     
     embed.set_footer(text="⚠️ 請妥善保管你的序號，可以截圖保存")
     
-    # 優先嘗試私訊發送
     try:
         await interaction.user.send(embed=embed)
         await interaction.response.send_message(
@@ -1131,7 +1567,6 @@ async def my_serials(interaction: discord.Interaction):
             ephemeral=True
         )
     except discord.Forbidden:
-        # 如果無法私訊，則在當前頻道顯示
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="delete_redeem_code", description="[管理員] 刪除兌換碼")
@@ -1158,7 +1593,7 @@ async def delete_redeem_code(interaction: discord.Interaction, code: str):
         ephemeral=True
     )
 
-# ==================== 戰鬥系統 ====================
+# ==================== 完整戰鬥系統 ====================
 @bot.tree.command(name="upgrade_gear", description="提升戰鬥屬性")
 @require_verified()
 @app_commands.describe(
@@ -1183,6 +1618,10 @@ async def upgrade_gear(
     amount: int,
     point_type: app_commands.Choice[str]
 ):
+    if amount <= 0:
+        await interaction.response.send_message("❌ 提升點數必須大於0！", ephemeral=True)
+        return
+    
     init_user(interaction.user.id)
     user_data = data['users'][str(interaction.user.id)]
     
@@ -1208,16 +1647,35 @@ async def upgrade_gear(
         color=discord.Color.gold()
     )
     
+    stat_names = {
+        'attack': '攻擊力',
+        'defense': '防禦力',
+        'hp': '生命值'
+    }
+    
+    embed.add_field(
+        name=f"✨ 提升了 {stat_names[stat.value]}",
+        value=f"+{amount} → {gear[stat.value]}",
+        inline=False
+    )
+    
     embed.add_field(
         name="💪 當前屬性",
         value=f"攻擊：{gear['attack']}\n防禦：{gear['defense']}\n生命：{gear['hp']}",
-        inline=False
+        inline=True
     )
     
     embed.add_field(
         name="💰 剩餘積分",
         value=f"遊戲：{user_data['game_points']}\n活動：{user_data['activity_points']}",
-        inline=False
+        inline=True
+    )
+    
+    total_power = gear['attack'] + gear['defense'] + gear['hp']
+    embed.add_field(
+        name="⚡ 總戰力",
+        value=str(total_power),
+        inline=True
     )
     
     await interaction.response.send_message(embed=embed)
@@ -1230,6 +1688,10 @@ async def battle(interaction: discord.Interaction, opponent: discord.User):
         await interaction.response.send_message("❌ 不能與自己戰鬥！", ephemeral=True)
         return
     
+    if opponent.bot:
+        await interaction.response.send_message("❌ 不能與機器人戰鬥！", ephemeral=True)
+        return
+    
     init_user(interaction.user.id)
     init_user(opponent.id)
     
@@ -1239,107 +1701,117 @@ async def battle(interaction: discord.Interaction, opponent: discord.User):
     attacker_gear = attacker_data['gear']
     defender_gear = defender_data['gear']
     
+    # 計算戰力
     attacker_power = attacker_gear['attack'] + attacker_gear['defense'] + attacker_gear['hp']
     defender_power = defender_gear['attack'] + defender_gear['defense'] + defender_gear['hp']
     
+    # 隨機骰子
     attacker_roll = random.randint(1, 100)
     defender_roll = random.randint(1, 100)
     
+    # 總分
     attacker_total = attacker_power + attacker_roll
     defender_total = defender_power + defender_roll
     
+    # 判定勝負
     if attacker_total > defender_total:
         winner = interaction.user
         loser = opponent
         winner_data = attacker_data
         loser_data = defender_data
+        winner_power = attacker_power
+        loser_power = defender_power
+        winner_roll = attacker_roll
+        loser_roll = defender_roll
     else:
         winner = opponent
         loser = interaction.user
         winner_data = defender_data
         loser_data = attacker_data
+        winner_power = defender_power
+        loser_power = attacker_power
+        winner_roll = defender_roll
+        loser_roll = attacker_roll
     
-    stolen = int(loser_data['game_points'] * 0.05)
+    # 計算戰利品（失敗者5%的遊戲積分）
+    stolen = max(int(loser_data['game_points'] * 0.05), 1)
+    stolen = min(stolen, loser_data['game_points'])  # 確保不超過擁有的積分
+    
     winner_data['game_points'] += stolen
     loser_data['game_points'] -= stolen
     
+    # 更新戰鬥統計
+    if 'battle_stats' not in winner_data:
+        winner_data['battle_stats'] = {'wins': 0, 'losses': 0, 'total_earned': 0, 'total_lost': 0}
+    if 'battle_stats' not in loser_data:
+        loser_data['battle_stats'] = {'wins': 0, 'losses': 0, 'total_earned': 0, 'total_lost': 0}
+    
+    winner_data['battle_stats']['wins'] += 1
+    winner_data['battle_stats']['total_earned'] += stolen
+    loser_data['battle_stats']['losses'] += 1
+    loser_data['battle_stats']['total_lost'] += stolen
+    
     save_data()
     
+    # 戰鬥結果
     embed = discord.Embed(
         title="⚔️ 戰鬥結果",
+        description="激烈的戰鬥結束了！",
         color=discord.Color.red()
     )
     
     embed.add_field(
         name="🏆 勝利者",
-        value=winner.mention,
-        inline=True
+        value=f"{winner.mention}\n戰力：{winner_power} + 🎲{winner_roll} = **{winner_power + winner_roll}**",
+        inline=False
     )
     
     embed.add_field(
         name="💀 失敗者",
-        value=loser.mention,
-        inline=True
+        value=f"{loser.mention}\n戰力：{loser_power} + 🎲{loser_roll} = **{loser_power + loser_roll}**",
+        inline=False
     )
     
     embed.add_field(
         name="💰 戰利品",
         value=f"{stolen} 遊戲積分",
-        inline=False
+        inline=True
     )
     
     embed.add_field(
-        name="📊 戰鬥詳情",
-        value=(
-            f"{interaction.user.mention}: {attacker_power} + 🎲{attacker_roll} = {attacker_total}\n"
-            f"{opponent.mention}: {defender_power} + 🎲{defender_roll} = {defender_total}"
-        ),
-        inline=False
+        name="📊 戰後積分",
+        value=f"{winner.mention}: {winner_data['game_points']}\n{loser.mention}: {loser_data['game_points']}",
+        inline=True
     )
+    
+    # 戰鬥技巧提示
+    if loser_power < winner_power * 0.7:
+        embed.add_field(
+            name="💡 提示",
+            value=f"{loser.mention} 可以使用 `/upgrade_gear` 提升屬性來增強戰力！",
+            inline=False
+        )
     
     await interaction.response.send_message(embed=embed)
-
-# ==================== 礦產系統 ====================
-@bot.tree.command(name="mineral", description="礦產系統 - 被動收入")
-@require_verified()
-async def mineral(interaction: discord.Interaction):
-    init_user(interaction.user.id)
-    user_data = data['users'][str(interaction.user.id)]
     
-    level = user_data['mineral_level']
-    daily_income = level * 10
-    
-    embed = discord.Embed(
-        title="⛏️ 礦產系統",
-        color=discord.Color.orange()
-    )
-    
-    embed.add_field(
-        name="當前等級",
-        value=f"Lv.{level}",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="每日收入",
-        value=f"{daily_income} 遊戲積分",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="升級費用",
-        value=f"{(level + 1) * 100} 遊戲積分",
-        inline=True
-    )
-    
-    await interaction.response.send_message(embed=embed)
+    # 通知失敗者
+    try:
+        await loser.send(
+            f"⚔️ **戰鬥通知**\n\n"
+            f"{winner.mention} 向你發起了挑戰並獲勝！\n"
+            f"你失去了 {stolen} 遊戲積分\n"
+            f"當前積分：{loser_data['game_points']}\n\n"
+            f"💡 使用 `/upgrade_gear` 提升屬性，準備復仇！"
+        )
+    except:
+        pass
 
 # ==================== Help 指令 ====================
 @bot.tree.command(name="help", description="查看機器人使用指南")
 async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🤖 機器人使用指南",
-        description="以下是所有可用功能",
+        description="以下是所有可用功能的完整說明",
         color=discord.Color.blue()
     )
     
@@ -1368,7 +1840,7 @@ async def help_command(interaction: discord.Interaction):
         value=(
             "`/checkin` - 每日打卡\n"
             "💡 每天獲得遊戲+活動積分\n"
-            "💡 連續打卡有加成\n"
+            "💡 連續打卡有加成（最高7天）\n"
             "💡 全週打卡有額外獎勵"
         ),
         inline=False
@@ -1378,8 +1850,23 @@ async def help_command(interaction: discord.Interaction):
         name="🎮 遊戲系統",
         value=(
             "`/game` - 遊戲選單\n"
-            "`/minesweeper` - 踩地雷\n"
-            "💡 可使用遊戲積分或活動積分下注"
+            "`/minesweeper` - 踩地雷（1.5倍獎勵）\n"
+            "`/mineral` - 礦產系統（被動收入）\n"
+            "`/mineral_upgrade` - 升級礦場\n"
+            "`/mineral_claim` - 領取礦產收益\n"
+            "💡 踩地雷支援3種難度\n"
+            "💡 礦場每小時產生積分"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="⚔️ 戰鬥系統",
+        value=(
+            "`/upgrade_gear` - 提升屬性（攻擊/防禦/生命）\n"
+            "`/battle` - 與玩家戰鬥\n"
+            "💡 勝利者可獲得對方5%遊戲積分\n"
+            "💡 戰力 = 攻擊 + 防禦 + 生命 + 隨機骰子"
         ),
         inline=False
     )
@@ -1387,7 +1874,8 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(
         name="💸 轉帳系統",
         value=(
-            "`/transfer` - 轉帳積分\n"
+            "`/transfer` - 轉帳積分給其他玩家\n"
+            "💡 支援遊戲積分和活動積分\n"
             "💡 手續費5%"
         ),
         inline=False
@@ -1399,17 +1887,18 @@ async def help_command(interaction: discord.Interaction):
             "`/redeem` - 兌換序號或積分\n"
             "`/my_serials` - 查看我的所有序號\n"
             "💡 支援積分獎勵和道具序號派發\n"
-            "💡 序號為20碼格式，妥善保管"
+            "💡 序號為20碼格式，會自動私訊給你\n"
+            "💡 兌換碼支援每日/每週/每月使用限制"
         ),
         inline=False
     )
     
     embed.add_field(
-        name="⚔️ 戰鬥系統",
+        name="📊 資料查詢",
         value=(
-            "`/upgrade_gear` - 提升屬性\n"
-            "`/battle` - 與玩家戰鬥\n"
-            "💡 勝利者可獲得對方5%遊戲積分"
+            "`/profile` - 查看個人資料\n"
+            "💡 可查看自己或其他玩家的資料\n"
+            "💡 顯示積分、屬性、礦場等級、戰績等"
         ),
         inline=False
     )
@@ -1417,14 +1906,20 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(
         name="🔧 管理員指令",
         value=(
+            "`/set_verification_channel` - 設置驗證頻道\n"
+            "`/set_verified_role` - 設置驗證身分組\n"
+            "`/add_redeem_code` - 新增積分兌換碼\n"
             "`/add_serial_code` - 新增序號池（自動生成）\n"
             "`/add_custom_serials` - 新增序號池（手動輸入）\n"
             "`/append_serials` - 補充序號到現有池\n"
             "`/redeem_status` - 查看兌換碼狀態\n"
-            "`/list_redeem_codes` - 列出所有兌換碼"
+            "`/list_redeem_codes` - 列出所有兌換碼\n"
+            "`/delete_redeem_code` - 刪除兌換碼"
         ),
         inline=False
     )
+    
+    embed.set_footer(text="💡 所有遊戲功能都已完整實裝！開始遊玩吧！")
     
     await interaction.response.send_message(embed=embed)
 
@@ -1433,6 +1928,10 @@ async def help_command(interaction: discord.Interaction):
 async def on_ready():
     print(f'✅ 機器人已登入: {bot.user}')
     print(f'📝 序號格式：20碼純文字（無短橫線）')
+    print(f'🎮 完整遊戲系統已啟用：')
+    print(f'   • 踩地雷（完整版）')
+    print(f'   • 礦產系統（完整版）')
+    print(f'   • 戰鬥系統（完整版）')
     
     try:
         synced = await bot.tree.sync()

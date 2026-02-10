@@ -1,15 +1,15 @@
 {
   "users": {
     "970350993042714655": {
-      "game_points": 0,
-      "activity_points": 0,
+      "game_points": 6,
+      "activity_points": 6,
       "invite_code": "J8VFAEX4",
       "invited_by": null,
       "invited_users": [],
-      "last_checkin": null,
-      "checkin_streak": 0,
+      "last_checkin": "2026-02-02T21:05:59.224818",
+      "checkin_streak": 1,
       "weekly_checkin": [
-        false,
+        true,
         false,
         false,
         false,
@@ -27,10 +27,64 @@
       "lottery_tickets": [],
       "redemption_history": {},
       "my_serials": []
+    },
+    "775343433278816268": {
+      "game_points": 2,
+      "activity_points": 12,
+      "invite_code": "IBK3W7YQ",
+      "invited_by": null,
+      "invited_users": [],
+      "last_checkin": "2026-02-10T19:26:19.674448",
+      "checkin_streak": 1,
+      "weekly_checkin": [
+        false,
+        true,
+        false,
+        false,
+        false,
+        false,
+        false
+      ],
+      "gear": {
+        "attack": 0,
+        "defense": 0,
+        "hp": 101
+      },
+      "mineral_level": 0,
+      "mineral_last_claim": null,
+      "lottery_tickets": [],
+      "redemption_history": {},
+      "my_serials": []
     }
   },
   "invite_codes": {},
-  "redemption_codes": {},
+  "redemption_codes": {
+    "12345678901234567890": {
+      "reward_type": "serial",
+      "item_name": "test",
+      "max_uses": 2,
+      "current_uses": 0,
+      "duration": "permanent",
+      "used_by": {},
+      "serial_pool": [
+        "1",
+        "2"
+      ],
+      "serial_assigned": {}
+    },
+    "123": {
+      "reward_type": "serial",
+      "item_name": "1",
+      "max_uses": 1,
+      "current_uses": 0,
+      "duration": "permanent",
+      "used_by": {},
+      "serial_pool": [
+        "1"
+      ],
+      "serial_assigned": {}
+    }
+  },
   "verification_channel": null,
-  "verified_role": null
+  "verified_role": "1467847533433851967"
 }
